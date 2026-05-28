@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
+
+# PyInstaller
+*.manifest
+
+# Distribution / packaging
+*.whl
+*.tar.gz
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Config / secrets
+*.env
+config.json
