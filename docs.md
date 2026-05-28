@@ -6,16 +6,20 @@ A lightweight cross-platform desktop app (Windows / macOS) that reminds you to t
 
 ## Features
 
-- Set a custom reminder interval (e.g. every 25 minutes)
-- Write your own break message
-- Pick any audio file (MP3, WAV, OGG, FLAC) as the reminder sound
-- Control volume from the settings
-- Countdown timer with progress bar visible in the main window
-- Pause and resume the timer at any time
+- Create **multiple named alerts**, each with its own interval, message, and sound
+- Enable or disable individual alerts without deleting them
+- Set a custom reminder interval per alert (1–480 minutes)
+- Write your own break message per alert
+- Pick any audio file (MP3, WAV, OGG, FLAC) as the reminder sound per alert
+- Control volume per alert, with a Test button to preview
+- Countdown timer with progress bar showing the soonest-firing alert
+- Alert name displayed below the countdown so you always know which one is next
+- Pause and resume all timers at any time
 - Clicking X hides the window to the system tray — the app keeps running
 - Double-click the tray icon to reopen the window
 - Right-click the tray icon for quick Pause / Resume / Quit
 - Settings are saved automatically to your home directory
+- Automatic migration from the old single-alert config format
 
 ---
 
@@ -34,9 +38,10 @@ take-a-break/
 ├── main.py               # Entry point — wires everything together
 ├── main_window.py        # Main UI window with countdown and controls
 ├── tray.py               # System tray icon and context menu
-├── timer_controller.py   # Interval timer with pause/resume support
+├── alert_manager.py      # Manages multiple alert timers (add/update/remove/pause)
+├── alert_editor.py       # Dialog for creating or editing a single alert
+├── alerts_dialog.py      # Dialog listing all alerts with toggle/edit/delete
 ├── notification.py       # Break popup that appears on screen
-├── settings_dialog.py    # Settings window (interval, message, sound)
 ├── audio.py              # Sound playback using pygame
 ├── config.py             # Load and save user config to disk
 ├── requirements.txt      # Python dependencies
@@ -112,10 +117,11 @@ The app will open its main window and start counting down immediately.
 
 | Element | What it does |
 |---|---|
-| Countdown (e.g. `24:13`) | Time remaining until the next break |
+| Countdown (e.g. `24:13`) | Time remaining until the next alert fires |
+| Alert name (below countdown) | Name of the alert that will fire next |
 | Progress bar | Visual fill showing how far through the interval you are |
-| Pause / Resume button | Stops or restarts the countdown |
-| Settings button | Opens the settings dialog |
+| Pause / Resume button | Stops or restarts all alert timers |
+| Manage Alerts button | Opens the Alerts dialog to create, edit, or delete alerts |
 | X (close button) | Hides the window to the system tray — does **not** quit |
 
 ### System Tray
@@ -125,29 +131,42 @@ Right-click the tray icon for the quick menu:
 | Option | What it does |
 |---|---|
 | Open | Brings the main window back |
-| Pause Timer / Resume Timer | Toggle the countdown without opening the window |
+| Pause Timer / Resume Timer | Toggle all timers without opening the window |
 | Quit | Fully exits the app |
 
 Double-clicking the tray icon also reopens the main window.
 
-### Settings Dialog
+### Manage Alerts Dialog
 
-Open it with the **Settings** button in the main window.
+Open it with the **Manage Alerts** button in the main window. It shows a scrollable list of all your alerts.
 
-| Setting | Description |
+| Control | What it does |
 |---|---|
-| Interval | How many minutes between each break reminder (1–480) |
-| Break Message | The text shown on the popup when the timer fires |
-| Sound File | Browse for any MP3, WAV, OGG, or FLAC file on your computer |
-| Volume | Slider from 0–100%, with a Test button to preview |
+| Checkbox | Enable or disable an alert without deleting it |
+| Alert name + detail | Name, interval, and a preview of the message |
+| Edit | Opens the Alert Editor for that alert |
+| Delete | Removes the alert after a confirmation prompt |
+| + Add Alert | Opens the Alert Editor to create a new alert |
 
-Click **Save** to apply changes. The new interval takes effect immediately and the countdown resets.
+### Alert Editor
+
+Used for both creating and editing a single alert.
+
+| Field | Description |
+|---|---|
+| Alert Name | A short label shown in the main window and the break notification (required) |
+| Reminder Interval | How many minutes between each reminder for this alert (1–480) |
+| Reminder Message | The text shown on the popup when the alert fires |
+| Sound File | Browse for any MP3, WAV, OGG, or FLAC file; Clear to remove |
+| Volume | Slider from 0–100%, with a Test button to preview the sound |
+
+Click **Save** to apply. The timer for that alert restarts immediately with the new interval.
 
 ### Break Notification
 
-When the timer fires:
+When an alert fires:
 - A popup appears centered on screen, always on top of other windows
-- Your chosen sound plays
+- The alert's chosen sound plays
 - Click **Got it** to dismiss it, or it auto-closes after 30 seconds
 
 ---
@@ -163,14 +182,32 @@ Example `config.json`:
 
 ```json
 {
-  "interval_minutes": 25,
-  "message": "Time to take a break! Stand up and stretch.",
-  "sound_path": "C:/Users/you/Music/bell.mp3",
-  "sound_volume": 0.8
+  "alerts": [
+    {
+      "id": "default",
+      "name": "Take a Break",
+      "interval_minutes": 25,
+      "message": "Time to take a break! Stand up and stretch.",
+      "sound_path": "C:/Users/you/Music/bell.mp3",
+      "sound_volume": 0.8,
+      "enabled": true
+    },
+    {
+      "id": "a1b2c3d4-...",
+      "name": "Drink Water",
+      "interval_minutes": 60,
+      "message": "Drink a glass of water!",
+      "sound_path": "",
+      "sound_volume": 0.5,
+      "enabled": true
+    }
+  ]
 }
 ```
 
 You can edit this file manually if needed. It is created on first save.
+
+> **Migrating from an older version:** If your `config.json` uses the old single-alert format (`interval_minutes`, `message`, etc. at the top level), it is automatically converted to the new multi-alert format on the next launch. Your settings are preserved.
 
 ---
 
@@ -178,31 +215,35 @@ You can edit this file manually if needed. It is created on first save.
 
 ### `main.py` — Entry Point
 
-Creates the `QApplication`, loads config, instantiates all components, and connects the timer signal to the break notification. Sets `setQuitOnLastWindowClosed(False)` so the app stays alive when the window is hidden.
+Creates the `QApplication`, loads the alerts list from config, instantiates `AlertManager`, `MainWindow`, and `TrayIcon`, then connects `manager.alert_triggered` to the break notification handler. Sets `setQuitOnLastWindowClosed(False)` so the app stays alive when the window is hidden.
 
 ### `config.py` — Config Management
 
-Two simple functions: `load()` reads `config.json` and merges it with defaults, `save()` writes the current settings to disk. The config lives in the user's home directory so it persists across sessions.
+`load()` reads `config.json` and returns a list of alert dicts. If the file contains the old single-alert format, it is silently migrated. `save()` writes the current alerts list under the `"alerts"` key. The config lives in the user's home directory so it persists across sessions.
 
-### `timer_controller.py` — Timer
+### `alert_manager.py` — Alert Manager
 
-Wraps Qt's `QTimer`. Emits a `break_triggered` signal when the interval elapses. Exposes `start()`, `stop()`, `restart()`, and `set_interval()`. The signal/slot pattern means the timer is decoupled from the UI — it just fires and doesn't care what listens.
+Replaces the old `timer_controller.py`. Manages one `QTimer` per enabled alert. Emits `alert_triggered(dict)` when an alert fires and `alerts_changed()` after any mutation. Exposes `add()`, `update()`, `remove()`, `set_enabled()`, `pause_all()`, `resume_all()`, and `next_alert()` (returns the soonest-firing alert and its remaining milliseconds). The manager is the single source of truth for alert state.
+
+### `alerts_dialog.py` — Alerts List UI
+
+A scrollable dialog that lists all alerts as card-style rows. Each row has an enable/disable checkbox, a name + detail label, an Edit button, and a Delete button (with confirmation). An **+ Add Alert** button in the header opens the `AlertEditor`. Rebuilds the list automatically whenever `alerts_changed` fires.
+
+### `alert_editor.py` — Alert Editor UI
+
+A form dialog used for both creating and editing a single alert. Fields: name, interval, message, sound file (with Browse / Clear), and volume (with a Test button). Validates that the name is not empty before accepting. Returns the filled-in alert dict via `get_alert()`.
 
 ### `main_window.py` — Main UI
 
-The main window has a separate 1-second `QTimer` that ticks the countdown display independently of the break timer. The `closeEvent` is overridden to call `event.ignore()` and `self.hide()` instead of closing — this is what makes the X button minimize to tray rather than quit.
+The main window displays a countdown and the name of the next-firing alert. A 1-second `QTimer` calls `manager.next_alert()` each tick to refresh the display. The **Manage Alerts** button (replaces the old **Settings** button) opens `AlertsDialog`. The `closeEvent` is overridden to `hide()` instead of closing, keeping the app in the tray.
 
 ### `tray.py` — System Tray
 
-Creates a `QSystemTrayIcon` with a right-click context menu. Generates a fallback colored icon if no `assets/icon.png` is found. Double-click activates the show-window handler.
+Creates a `QSystemTrayIcon` with a right-click context menu. Pause/Resume now calls `manager.pause_all()` / `manager.resume_all()` and also syncs the main window's button label and status text. Generates a fallback colored icon if no `assets/icon.png` is found.
 
 ### `notification.py` — Break Popup
 
 A frameless `QDialog` with `WindowStaysOnTopHint` so it appears above everything. A `QTimer.singleShot` auto-dismisses it after 30 seconds. Plays audio immediately on creation.
-
-### `settings_dialog.py` — Settings UI
-
-Reads the current config into form fields on open, writes back to the config dict on Save, and calls `config.save()` to persist. The sound Test button calls `audio.play()` directly so you can hear the sound without waiting for a break.
 
 ### `audio.py` — Audio Playback
 
@@ -331,8 +372,8 @@ The app loads it automatically. If the file is missing, a purple square with a "
 Make sure you used the X button on the window, not Quit from the tray menu. The tray icon should be visible in the system tray area (bottom-right on Windows, top-right on macOS).
 
 **No sound plays**
-- Check that the file path in Settings is still valid
-- Use the Test button in Settings to verify the file works
+- Check that the file path in the Alert Editor is still valid
+- Use the Test button in the Alert Editor to verify the file works
 - Supported formats: MP3, WAV, OGG, FLAC
 
 **Settings aren't saving**
